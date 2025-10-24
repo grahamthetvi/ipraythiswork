@@ -51,6 +51,11 @@ class HoughGazeTracker(EyeTrackerBase):
         self.pupil_history = []
         self.max_history = 5
 
+        # Current frame (for GUI display)
+        self.frame = None
+        self.frame_width = self.camera_width
+        self.frame_height = self.camera_height
+
     def start(self, camera_index: int = 0) -> bool:
         """
         Start Hough tracker.
@@ -99,6 +104,9 @@ class HoughGazeTracker(EyeTrackerBase):
         ret, frame = self.cap.read()
         if not ret:
             return None
+
+        # Store frame for GUI display
+        self.frame = frame.copy()
 
         # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -187,6 +195,40 @@ class HoughGazeTracker(EyeTrackerBase):
         screen_y = max(0, min(self.screen_height, screen_y))
 
         return (screen_x, screen_y)
+
+    def get_frame_with_pupil(self) -> Optional[np.ndarray]:
+        """
+        Get current camera frame with detected pupil drawn on it.
+
+        Returns:
+            Frame with pupil visualization, or None
+        """
+        if self.frame is None:
+            return None
+
+        display_frame = self.frame.copy()
+
+        # Get current pupil position
+        pupil = self.detect_pupil()
+        if pupil:
+            px, py = int(pupil[0]), int(pupil[1])
+
+            # Draw pupil
+            cv2.circle(display_frame, (px, py), 20, (0, 255, 0), 2)
+            cv2.circle(display_frame, (px, py), 5, (0, 255, 0), -1)
+
+            # Draw crosshair
+            cv2.line(display_frame, (px - 30, py), (px + 30, py), (0, 255, 0), 1)
+            cv2.line(display_frame, (px, py - 30), (px, py + 30), (0, 255, 0), 1)
+
+            # Show coordinates
+            cv2.putText(display_frame, f"Pupil: ({px}, {py})",
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        else:
+            cv2.putText(display_frame, "Pupil: Not detected",
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+        return display_frame
 
     def get_gaze_point(self) -> Optional[GazePoint]:
         """
