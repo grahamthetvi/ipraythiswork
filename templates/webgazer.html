@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGazer Eye Tracking</title>
+    <script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #status {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border: 2px solid #0f0;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+
+        #gaze-dot {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            background: red;
+            border: 2px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 999;
+            display: none;
+        }
+
+        #calibration-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 998;
+        }
+
+        #calibration-overlay.hidden {
+            display: none;
+        }
+
+        .calibration-point {
+            position: fixed;
+            width: 40px;
+            height: 40px;
+            background: red;
+            border: 3px solid white;
+            border-radius: 50%;
+            cursor: pointer;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+        }
+
+        #instructions {
+            font-size: 24px;
+            text-align: center;
+            color: white;
+        }
+
+        .metric {
+            margin: 5px 0;
+        }
+
+        .metric-label {
+            color: #0f0;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">
+        <h2>WebGazer Eye Tracking</h2>
+        <div class="metric">
+            <span class="metric-label">Status:</span>
+            <span id="tracker-status">Initializing...</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Gaze X:</span>
+            <span id="gaze-x">-</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Gaze Y:</span>
+            <span id="gaze-y">-</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Confidence:</span>
+            <span id="confidence">-</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Calibrated:</span>
+            <span id="calibrated">No</span>
+        </div>
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #0f0;">
+            <button onclick="startCalibration()" style="padding: 10px; font-size: 14px;">
+                Calibrate
+            </button>
+            <button onclick="toggleGazeDot()" style="padding: 10px; font-size: 14px; margin-left: 5px;">
+                Toggle Dot
+            </button>
+        </div>
+    </div>
+
+    <div id="gaze-dot"></div>
+
+    <div id="calibration-overlay" class="hidden">
+        <div id="instructions">
+            Click each red dot as it appears<br>
+            <small>Look at the dot before clicking</small>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const SCREEN_WIDTH = {{ screen_width }};
+        const SCREEN_HEIGHT = {{ screen_height }};
+        const SEND_INTERVAL = 33; // ~30 FPS
+
+        // State
+        let isCalibrated = false;
+        let showGazeDot = true;
+        let gazeData = null;
+
+        // Initialize WebGazer
+        console.log('Initializing WebGazer...');
+
+        webgazer.setGazeListener(function(data, elapsedTime) {
+            if (data == null) {
+                return;
+            }
+
+            gazeData = data;
+
+            // Update UI
+            document.getElementById('gaze-x').textContent = Math.round(data.x);
+            document.getElementById('gaze-y').textContent = Math.round(data.y);
+            document.getElementById('tracker-status').textContent = 'Tracking';
+
+            // Update gaze dot
+            if (showGazeDot) {
+                const dot = document.getElementById('gaze-dot');
+                dot.style.left = (data.x - 10) + 'px';
+                dot.style.top = (data.y - 10) + 'px';
+                dot.style.display = 'block';
+            }
+
+            // Send to Python backend
+            sendGazeData(data);
+        }).begin();
+
+        // Configure WebGazer
+        webgazer.showVideoPreview(true)
+                .showPredictionPoints(true)
+                .applyKalmanFilter(true); // Smoothing
+
+        // Send gaze data to Python backend
+        let lastSendTime = 0;
+        function sendGazeData(data) {
+            const now = Date.now();
+            if (now - lastSendTime < SEND_INTERVAL) {
+                return; // Rate limiting
+            }
+            lastSendTime = now;
+
+            fetch('/gaze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    x: data.x,
+                    y: data.y,
+                    confidence: 1.0, // WebGazer doesn't provide confidence
+                    timestamp: now
+                })
+            }).catch(err => {
+                console.error('Error sending gaze data:', err);
+            });
+        }
+
+        // Toggle gaze dot visibility
+        function toggleGazeDot() {
+            showGazeDot = !showGazeDot;
+            if (!showGazeDot) {
+                document.getElementById('gaze-dot').style.display = 'none';
+            }
+        }
+
+        // Calibration
+        function startCalibration() {
+            console.log('Starting calibration...');
+            document.getElementById('calibration-overlay').classList.remove('hidden');
+
+            // 9-point calibration
+            const points = [
+                {x: 0.1, y: 0.1},  // Top-left
+                {x: 0.5, y: 0.1},  // Top-center
+                {x: 0.9, y: 0.1},  // Top-right
+                {x: 0.1, y: 0.5},  // Middle-left
+                {x: 0.5, y: 0.5},  // Center
+                {x: 0.9, y: 0.5},  // Middle-right
+                {x: 0.1, y: 0.9},  // Bottom-left
+                {x: 0.5, y: 0.9},  // Bottom-center
+                {x: 0.9, y: 0.9}   // Bottom-right
+            ];
+
+            let currentPoint = 0;
+
+            function showNextPoint() {
+                if (currentPoint >= points.length) {
+                    finishCalibration();
+                    return;
+                }
+
+                // Remove previous point
+                const existingPoint = document.querySelector('.calibration-point');
+                if (existingPoint) {
+                    existingPoint.remove();
+                }
+
+                // Create new calibration point
+                const point = points[currentPoint];
+                const screenX = point.x * window.innerWidth;
+                const screenY = point.y * window.innerHeight;
+
+                const pointDiv = document.createElement('div');
+                pointDiv.className = 'calibration-point';
+                pointDiv.style.left = (screenX - 20) + 'px';
+                pointDiv.style.top = (screenY - 20) + 'px';
+
+                pointDiv.onclick = function() {
+                    // Record calibration point
+                    webgazer.recordScreenPosition(screenX, screenY);
+                    currentPoint++;
+                    setTimeout(showNextPoint, 500);
+                };
+
+                document.getElementById('calibration-overlay').appendChild(pointDiv);
+            }
+
+            function finishCalibration() {
+                document.getElementById('calibration-overlay').classList.add('hidden');
+                isCalibrated = true;
+                document.getElementById('calibrated').textContent = 'Yes';
+                console.log('Calibration complete!');
+            }
+
+            // Start calibration sequence
+            showNextPoint();
+        }
+
+        // Auto-calibration reminder
+        setTimeout(() => {
+            if (!isCalibrated) {
+                if (confirm('Would you like to calibrate the eye tracker now?')) {
+                    startCalibration();
+                }
+            }
+        }, 3000);
+
+        console.log('WebGazer initialized and ready');
+    </script>
+</body>
+</html>
