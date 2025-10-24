@@ -1,0 +1,13 @@
+# Requirements for CVI AAC System (No Dlib Required)
+
+# Core dependencies
+opencv-python>=4.5.0
+numpy>=1.19.0
+pyttsx3>=2.90
+
+# Optional: Only if you want GazeTracking (requires C++ compiler)
+# dlib>=19.22.0
+# gaze-tracking>=0.1.0
+
+# Note: The CVI AAC system works perfectly with just Hough Circle tracking
+# which uses only OpenCV (no dlib/C++ compiler needed)

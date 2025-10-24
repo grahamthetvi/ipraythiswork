@@ -190,7 +190,8 @@ class AACBoard:
 
     def draw_board(self, region_id: Optional[int] = None,
                   confidence: float = 0.0,
-                  dwell_progress: float = 0.0) -> np.ndarray:
+                  dwell_progress: float = 0.0,
+                  camera_frame: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Draw AAC board interface.
 
@@ -198,6 +199,7 @@ class AACBoard:
             region_id: Currently gazed region
             confidence: Confidence score
             dwell_progress: Dwell time progress (0.0-1.0)
+            camera_frame: Optional camera frame for pupil preview
 
         Returns:
             Board display image
@@ -208,6 +210,10 @@ class AACBoard:
 
         # Draw message bar at top
         self._draw_message_bar(display)
+
+        # Draw camera feed if provided
+        if camera_frame is not None:
+            self._draw_camera_preview(display, camera_frame)
 
         # Calculate board area (below message bar)
         board_y_start = 120
@@ -295,6 +301,48 @@ class AACBoard:
         if self.message_buffer:
             cv2.putText(display, "Press 'C' to clear", (20, 90),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+
+    def _draw_camera_preview(self, display: np.ndarray, camera_frame: np.ndarray):
+        """Draw camera feed with pupil detection in top-right corner."""
+        # Camera preview size
+        preview_w, preview_h = 240, 180
+
+        # Resize camera frame
+        camera_small = cv2.resize(camera_frame, (preview_w, preview_h))
+
+        # Draw pupil detection if available
+        if len(self.tracker.pupil_history) > 0:
+            pupil = self.tracker.pupil_history[-1]
+            # Scale pupil coordinates
+            scale_x = preview_w / camera_frame.shape[1]
+            scale_y = preview_h / camera_frame.shape[0]
+            pupil_small = (int(pupil[0] * scale_x), int(pupil[1] * scale_y))
+
+            # Draw pupil indicator
+            cv2.circle(camera_small, pupil_small, 8, (0, 255, 0), 2)
+            cv2.circle(camera_small, pupil_small, 2, (0, 0, 255), -1)
+
+            # Crosshair
+            cv2.line(camera_small, (pupil_small[0] - 12, pupil_small[1]),
+                    (pupil_small[0] + 12, pupil_small[1]), (0, 255, 0), 1)
+            cv2.line(camera_small, (pupil_small[0], pupil_small[1] - 12),
+                    (pupil_small[0], pupil_small[1] + 12), (0, 255, 0), 1)
+
+        # Position in top-right corner (below message bar)
+        x_offset = self.screen_width - preview_w - 15
+        y_offset = 110
+
+        # Border
+        cv2.rectangle(display, (x_offset - 2, y_offset - 2),
+                     (x_offset + preview_w + 2, y_offset + preview_h + 2),
+                     (150, 150, 150), 2)
+
+        # Overlay camera feed
+        display[y_offset:y_offset+preview_h, x_offset:x_offset+preview_w] = camera_small
+
+        # Label
+        cv2.putText(display, "Camera", (x_offset, y_offset - 8),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
     def _draw_centered_text(self, display: np.ndarray, text: str,
                            center: tuple, font_scale: float = 1.0,
@@ -409,7 +457,7 @@ class AACBoard:
             self.tracker.update_fps()
 
             # Draw AAC board
-            display = self.draw_board(region_id, confidence, dwell_progress)
+            display = self.draw_board(region_id, confidence, dwell_progress, camera_frame=frame)
 
             cv2.imshow('AAC Board', display)
 
@@ -455,12 +503,29 @@ def main():
     print("\nThis demonstrates practical use of eye gaze tracking")
     print("for Augmentative and Alternative Communication (AAC)")
 
+    # Camera selection
+    print("\n" + "="*60)
+    print("CAMERA SELECTION")
+    print("="*60)
+
+    select_camera = input("\nSelect camera interactively? (y/n, default=n): ").strip().lower()
+    camera_index = 0
+
+    if select_camera == 'y':
+        from camera_selector import CameraSelector
+        selector = CameraSelector()
+        selected = selector.run_interactive_selection()
+        if selected is not None:
+            camera_index = selected
+        else:
+            print("\nUsing default camera 0")
+
     # Create tracker
     print("\nInitializing gaze tracker...")
     tracker = Gaze9Region(
         screen_width=1280,
         screen_height=720,
-        camera_index=0,
+        camera_index=camera_index,
         dwell_time=1.5,  # Slightly longer for AAC to prevent accidents
         confidence_threshold=0.75,
         smoothing_window=5

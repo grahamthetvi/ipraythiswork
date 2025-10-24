@@ -109,6 +109,8 @@ class Gaze9Region:
         self.show_visualization = True
         self.show_regions = True
         self.show_metrics = True
+        self.show_camera_feed = True  # NEW: Show camera with pupil detection
+        self.camera_feed_size = (320, 240)  # Size of camera preview
 
         # Region colors for visualization
         self.region_colors = [
@@ -349,7 +351,8 @@ class Gaze9Region:
 
     def draw_visualization(self, frame: np.ndarray,
                           region_id: Optional[int],
-                          confidence: float) -> np.ndarray:
+                          confidence: float,
+                          camera_frame: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Draw visualization overlay on frame.
 
@@ -357,6 +360,7 @@ class Gaze9Region:
             frame: Camera frame
             region_id: Current region (or None)
             confidence: Confidence score
+            camera_frame: Optional raw camera frame for preview
 
         Returns:
             Annotated frame
@@ -381,6 +385,10 @@ class Gaze9Region:
         # Draw dwell time progress
         if region_id is not None and self.region_start_time is not None:
             self._draw_dwell_progress(display, region_id)
+
+        # Draw camera feed overlay
+        if camera_frame is not None:
+            self._draw_camera_feed_overlay(display, camera_frame)
 
         return display
 
@@ -506,6 +514,57 @@ class Gaze9Region:
         cv2.putText(display, progress_text, (text_x, text_y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
+    def _draw_camera_feed_overlay(self, display: np.ndarray, camera_frame: np.ndarray):
+        """
+        Draw camera feed with pupil detection in corner of display.
+
+        Args:
+            display: Main display frame
+            camera_frame: Raw camera frame
+        """
+        if not self.show_camera_feed:
+            return
+
+        h, w = display.shape[:2]
+        feed_w, feed_h = self.camera_feed_size
+
+        # Resize camera frame
+        camera_small = cv2.resize(camera_frame, self.camera_feed_size)
+
+        # Draw pupil detection on camera feed
+        if len(self.pupil_history) > 0:
+            pupil = self.pupil_history[-1]
+            # Scale pupil coordinates to small frame
+            scale_x = feed_w / camera_frame.shape[1]
+            scale_y = feed_h / camera_frame.shape[0]
+            pupil_small = (int(pupil[0] * scale_x), int(pupil[1] * scale_y))
+
+            # Draw pupil indicator
+            cv2.circle(camera_small, pupil_small, 10, (0, 255, 0), 2)
+            cv2.circle(camera_small, pupil_small, 3, (0, 0, 255), -1)
+
+            # Crosshair
+            cv2.line(camera_small, (pupil_small[0] - 15, pupil_small[1]),
+                    (pupil_small[0] + 15, pupil_small[1]), (0, 255, 0), 1)
+            cv2.line(camera_small, (pupil_small[0], pupil_small[1] - 15),
+                    (pupil_small[0], pupil_small[1] + 15), (0, 255, 0), 1)
+
+        # Position in bottom-right corner
+        x_offset = w - feed_w - 10
+        y_offset = h - feed_h - 10
+
+        # Add border
+        cv2.rectangle(display, (x_offset - 2, y_offset - 2),
+                     (x_offset + feed_w + 2, y_offset + feed_h + 2),
+                     (255, 255, 255), 2)
+
+        # Overlay camera feed
+        display[y_offset:y_offset+feed_h, x_offset:x_offset+feed_w] = camera_small
+
+        # Label
+        cv2.putText(display, "Camera View", (x_offset, y_offset - 8),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
     def run_interactive(self, on_gaze_event=None):
         """
         Run interactive gaze tracking loop.
@@ -527,6 +586,7 @@ class Gaze9Region:
         print("  'l' - Load calibration")
         print("  'v' - Toggle visualization")
         print("  'm' - Toggle metrics")
+        print("  'p' - Toggle camera preview")
         print("  '+' - Increase dwell time")
         print("  '-' - Decrease dwell time")
         print("\nPress any key to start...")
@@ -566,7 +626,7 @@ class Gaze9Region:
 
             # Draw visualization
             if self.show_visualization:
-                display = self.draw_visualization(frame, region_id, confidence)
+                display = self.draw_visualization(frame, region_id, confidence, camera_frame=frame)
             else:
                 display = frame
 
@@ -601,6 +661,9 @@ class Gaze9Region:
                 self.show_visualization = not self.show_visualization
             elif key == ord('m'):
                 self.show_metrics = not self.show_metrics
+            elif key == ord('p'):
+                self.show_camera_feed = not self.show_camera_feed
+                print(f"Camera preview: {'ON' if self.show_camera_feed else 'OFF'}")
             elif key == ord('+'):
                 self.dwell_time = min(5.0, self.dwell_time + 0.1)
                 print(f"Dwell time: {self.dwell_time:.1f}s")
